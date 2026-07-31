@@ -6,7 +6,7 @@ structuredContent payload — never raw rows.
 from mcp.types import CallToolResult, ResourceLink, TextContent
 
 from periods import parse_period
-from refs import build_ref
+from refs import parse_ref, build_ref
 from seed.db import get_connection
 
 TEMPLATES = {
@@ -189,7 +189,13 @@ def orders_table(
             "next_cursor": next_cursor,
             "total_rows": len(rows),
             "data_source_ref": build_ref(
-                "orders_table", status=status, region=region, date_from=date_from, date_to=date_to, cursor=cursor
+                "orders_table",
+                status=status,
+                region=region,
+                date_from=date_from,
+                date_to=date_to,
+                cursor=cursor,
+                limit=limit,
             ),
         },
         f"Orders {cursor + 1}-{cursor + len(rows)} of {total_count}.",
@@ -262,3 +268,29 @@ def category_breakdown(period: str | None = None) -> CallToolResult:
         },
         f"Revenue by category{f' for {period}' if period else ''} across {len(rows)} categories.",
     )
+
+
+# Registry + int-typed param names, so a data_source_ref string (built by
+# build_ref) can be parsed back into a real call — this is what the data://
+# resource uses to serve pagination/drill-down without going through
+# tools/call again.
+REGISTRY = {
+    "revenue_by_region": revenue_by_region,
+    "monthly_revenue_trend": monthly_revenue_trend,
+    "top_products": top_products,
+    "orders_table": orders_table,
+    "kpi_summary": kpi_summary,
+    "category_breakdown": category_breakdown,
+}
+
+INT_PARAMS = {"months", "n", "cursor", "limit"}
+
+
+def resolve_ref(ref: str) -> dict:
+    """Replays a data_source_ref and returns its structuredContent."""
+    tool_name, params = parse_ref(ref)
+    if tool_name not in REGISTRY:
+        raise ValueError(f"Unknown tool in data_source_ref: {tool_name}")
+    typed_params = {k: (int(v) if k in INT_PARAMS else v) for k, v in params.items()}
+    result = REGISTRY[tool_name](**typed_params)
+    return result.structured_content

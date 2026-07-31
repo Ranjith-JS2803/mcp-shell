@@ -41,6 +41,14 @@ def get_template(name: str) -> str:
     return path.read_text()
 
 
+@mcp.resource("data://{ref}")
+def get_data(ref: str) -> dict:
+    """Replays a stateless data_source_ref (e.g. orders_table?region=North&cursor=50)
+    and returns the matching page of structuredContent — no session state, works
+    the same whether called seconds or days after the original tool call."""
+    return tools.resolve_ref(ref)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8002))
     mcp.run(transport="streamable-http", host="0.0.0.0", port=port)

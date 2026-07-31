@@ -6,7 +6,7 @@ replay a tool call — no session state, so the gateway can reconstruct the
 exact MCP call for pagination or drill-down, even days later from history.
 """
 
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, quote, urlencode
 
 
 def build_ref(tool_name: str, **params) -> str:
@@ -14,3 +14,17 @@ def build_ref(tool_name: str, **params) -> str:
     if not clean:
         return tool_name
     return f"{tool_name}?{urlencode(clean)}"
+
+
+def parse_ref(ref: str) -> tuple[str, dict[str, str]]:
+    tool_name, _, query = ref.partition("?")
+    params = dict(parse_qsl(query))
+    return tool_name, params
+
+
+def data_resource_uri(ref: str) -> str:
+    """The data_source_ref contains literal `?`/`&`/`=`, so it must be
+    percent-encoded before being embedded as the {ref} segment of the
+    data://{ref} resource template — otherwise those chars get parsed as
+    URI template structure instead of matched as the variable's value."""
+    return f"data://{quote(ref, safe='')}"
