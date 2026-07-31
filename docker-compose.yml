@@ -5,9 +5,10 @@ services:
       - "6379:6379"
       - "8001:8001"   # RedisInsight
 
-  mcp-server:
+  ecommerce-mcp-server:
     build:
-      context: ./services/mcp-server
+      context: .
+      dockerfile: services/ecommerce-mcp-server/Dockerfile
     ports:
       - "8002:8002"
     volumes:
@@ -19,7 +20,7 @@ services:
     ports:
       - "8003:8003"
     depends_on:
-      - mcp-server
+      - ecommerce-mcp-server
       - redis
 
   llm-agent:
