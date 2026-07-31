@@ -1,11 +1,14 @@
 import os
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
 import tools
 
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
 mcp = MCPServer(
-    name="mcp-shell-mcp-server",
+    name="ecommerce-mcp-server",
     instructions=(
         "E-commerce data tools backed by a seeded 50k-row SQLite dataset. "
         "Every tool returns a template resource_link plus a small aggregated "
@@ -27,6 +30,15 @@ mcp.tool(name="kpi_summary", description="Total revenue, order count, and averag
     tools.kpi_summary
 )
 mcp.tool(name="category_breakdown", description="Revenue split by product category.")(tools.category_breakdown)
+
+
+@mcp.resource("template://{name}", mime_type="text/html")
+def get_template(name: str) -> str:
+    """Serves a self-contained artifact template by name (e.g. bar-chart-v1)."""
+    path = (TEMPLATES_DIR / f"{name}.html").resolve()
+    if path.parent != TEMPLATES_DIR or not path.is_file():
+        raise FileNotFoundError(f"No such template: {name}")
+    return path.read_text()
 
 
 if __name__ == "__main__":
