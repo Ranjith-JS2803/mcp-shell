@@ -9,5 +9,13 @@ wheels/
 # Virtual environments
 .venv
 
-# Documents
-docs/
+# Node
+node_modules/
+
+# Env files
+.env
+.env.local
+
+# SQLite data
+*.db
+*.sqlite3

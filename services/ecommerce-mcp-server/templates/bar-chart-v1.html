@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: Canvas; color: CanvasText;
+  }
+  #title { font-size: 13px; font-weight: 600; margin: 0 0 8px 2px; opacity: 0.85; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .bar { fill: #5B8DEF; }
+  .bar:hover { fill: #4874d1; }
+  .label { font-size: 11px; fill: currentColor; opacity: 0.75; }
+  .value { font-size: 11px; fill: currentColor; font-weight: 600; }
+  .axis-line { stroke: currentColor; stroke-opacity: 0.15; }
+  #empty { font-size: 13px; opacity: 0.6; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+  <div id="title"></div>
+  <div id="chart"></div>
+
+  <script>
+    let state = { categories: [], values: [], title: "" };
+
+    function render(data) {
+      state = { ...state, ...data };
+      draw();
+    }
+
+    function appendRows(data) {
+      state.categories = state.categories.concat(data.categories || []);
+      state.values = state.values.concat(data.values || []);
+      draw();
+    }
+
+    function draw() {
+      document.getElementById("title").textContent = state.title || "";
+      const chartEl = document.getElementById("chart");
+      const { categories, values } = state;
+
+      if (!categories.length) {
+        chartEl.innerHTML = '<div id="empty">No data</div>';
+        return;
+      }
+
+      const width = chartEl.clientWidth || 600;
+      const height = 320;
+      const padding = { top: 16, right: 12, bottom: 36, left: 12 };
+      const plotW = width - padding.left - padding.right;
+      const plotH = height - padding.top - padding.bottom;
+      const maxVal = Math.max(...values, 1);
+      const barGap = 10;
+      const barW = Math.max((plotW - barGap * (categories.length - 1)) / categories.length, 4);
+
+      let bars = "";
+      let labels = "";
+      categories.forEach((cat, i) => {
+        const val = values[i] || 0;
+        const barH = (val / maxVal) * plotH;
+        const x = padding.left + i * (barW + barGap);
+        const y = padding.top + (plotH - barH);
+        bars += `<rect class="bar" x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, 1)}" rx="3"></rect>`;
+        bars += `<text class="value" x="${x + barW / 2}" y="${y - 6}" text-anchor="middle">${formatValue(val)}</text>`;
+        labels += `<text class="label" x="${x + barW / 2}" y="${height - padding.bottom + 16}" text-anchor="middle">${truncate(cat)}</text>`;
+      });
+
+      const baseline = padding.top + plotH;
+
+      chartEl.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+          <line class="axis-line" x1="${padding.left}" y1="${baseline}" x2="${width - padding.right}" y2="${baseline}"></line>
+          ${bars}
+          ${labels}
+        </svg>`;
+    }
+
+    function truncate(s) {
+      s = String(s);
+      return s.length > 12 ? s.slice(0, 11) + "…" : s;
+    }
+
+    function formatValue(v) {
+      if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
+      if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(1) + "k";
+      return String(v);
+    }
+
+    window.addEventListener("message", (e) => {
+      if (!e.data || typeof e.data !== "object") return;
+      if (e.data.type === "hydrate") render(e.data.data);
+      if (e.data.type === "append") appendRows(e.data.data);
+    });
+
+    window.addEventListener("resize", draw);
+  </script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+services:
+  redis:
+    image: redis/redis-stack:7.4.0-v8
+    ports:
+      - "6379:6379"
+      - "8001:8001"   # RedisInsight
+
+  ecommerce-mcp-server:
+    build:
+      context: .
+      dockerfile: services/ecommerce-mcp-server/Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - mcp-data:/app/data
+
+  mcp-gateway:
+    build:
+      context: ./services/mcp-gateway
+    ports:
+      - "8003:8003"
+    depends_on:
+      - ecommerce-mcp-server
+      - redis
+
+  llm-agent:
+    build:
+      context: ./services/llm-agent
+    ports:
+      - "8004:8004"
+    env_file:
+      - .env
+    depends_on:
+      - mcp-gateway
+
+  chat-interface:
+    build:
+      context: ./chat-interface
+    ports:
+      - "3000:3000"
+    depends_on:
+      - llm-agent
+
+volumes:
+  mcp-data:

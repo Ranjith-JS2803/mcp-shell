@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    background: Canvas; color: CanvasText;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; white-space: nowrap; }
+  thead th {
+    cursor: pointer; user-select: none; font-weight: 600;
+    border-bottom: 1px solid currentColor; opacity: 0.85;
+  }
+  thead th:hover { opacity: 1; }
+  .sort-arrow { opacity: 0.5; margin-left: 4px; font-size: 10px; }
+  tbody tr:nth-child(odd) { background: rgba(127,127,127,0.06); }
+  tbody td { border-bottom: 1px solid rgba(127,127,127,0.08); }
+  #footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; opacity: 0.75; }
+  #load-more {
+    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 6px;
+    border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; opacity: 0.85;
+  }
+  #load-more:hover { opacity: 1; }
+  #load-more:disabled { opacity: 0.35; cursor: default; }
+  #empty { font-size: 13px; opacity: 0.6; padding: 24px; text-align: center; }
+  #wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+  <div id="wrap"></div>
+  <div id="footer"></div>
+
+  <script>
+    let state = { columns: [], rows: [], total_count: 0, cursor: 0, next_cursor: null };
+    let dataSourceRef = null;
+    let sort = { index: null, dir: 1 };
+
+    function render(data) {
+      state = { ...state, ...data };
+      dataSourceRef = data.data_source_ref || dataSourceRef;
+      draw();
+    }
+
+    function appendRows(data) {
+      state.rows = state.rows.concat(data.rows || []);
+      state.next_cursor = data.next_cursor ?? null;
+      state.total_count = data.total_count ?? state.total_count;
+      draw();
+    }
+
+    function sortedRows() {
+      if (sort.index === null) return state.rows;
+      const i = sort.index;
+      return [...state.rows].sort((a, b) => {
+        const av = a[i], bv = b[i];
+        if (av === bv) return 0;
+        return (av > bv ? 1 : -1) * sort.dir;
+      });
+    }
+
+    function onHeaderClick(i) {
+      sort = sort.index === i ? { index: i, dir: -sort.dir } : { index: i, dir: 1 };
+      draw();
+    }
+
+    function draw() {
+      const wrap = document.getElementById("wrap");
+      const footer = document.getElementById("footer");
+
+      if (!state.columns.length) {
+        wrap.innerHTML = '<div id="empty">No data</div>';
+        footer.innerHTML = "";
+        return;
+      }
+
+      const rows = sortedRows();
+
+      const head = state.columns
+        .map((c, i) => {
+          const arrow = sort.index === i ? (sort.dir === 1 ? "▲" : "▼") : "";
+          return `<th onclick="onHeaderClick(${i})">${escapeHtml(c)}<span class="sort-arrow">${arrow}</span></th>`;
+        })
+        .join("");
+
+      const body = rows
+        .map((row) => `<tr>${row.map((v) => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`)
+        .join("");
+
+      wrap.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+      const shown = state.rows.length;
+      const canLoadMore = state.next_cursor !== null && state.next_cursor !== undefined;
+      footer.innerHTML = `
+        <span>${shown} of ${state.total_count} rows</span>
+        <button id="load-more" ${canLoadMore ? "" : "disabled"}>Load more</button>`;
+      document.getElementById("load-more").onclick = loadMore;
+    }
+
+    function loadMore() {
+      if (state.next_cursor === null || state.next_cursor === undefined) return;
+      window.parent.postMessage(
+        { type: "request_data", cursor: state.next_cursor, source: dataSourceRef },
+        "*"
+      );
+    }
+
+    function escapeHtml(v) {
+      return String(v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    window.addEventListener("message", (e) => {
+      if (!e.data || typeof e.data !== "object") return;
+      if (e.data.type === "hydrate") render(e.data.data);
+      if (e.data.type === "append") appendRows(e.data.data);
+    });
+  </script>
+</body>
+</html>

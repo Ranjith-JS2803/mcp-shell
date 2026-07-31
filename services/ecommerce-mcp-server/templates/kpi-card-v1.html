@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: Canvas; color: CanvasText;
+  }
+  #grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .card {
+    border: 1px solid rgba(127,127,127,0.2); border-radius: 10px; padding: 12px 14px;
+  }
+  .label { font-size: 12px; opacity: 0.65; margin-bottom: 6px; }
+  .value { font-size: 22px; font-weight: 700; line-height: 1.1; }
+  .unit { font-size: 12px; font-weight: 500; opacity: 0.6; margin-left: 4px; }
+  .delta { font-size: 12px; margin-top: 6px; font-weight: 600; }
+  .delta.up { color: #2ecc71; }
+  .delta.down { color: #e74c3c; }
+  #empty { font-size: 13px; opacity: 0.6; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+  <div id="grid"></div>
+
+  <script>
+    let state = { kpis: [] };
+
+    function render(data) {
+      state = { ...state, ...data };
+      draw();
+    }
+
+    function appendRows(data) {
+      state.kpis = state.kpis.concat(data.kpis || []);
+      draw();
+    }
+
+    function draw() {
+      const grid = document.getElementById("grid");
+      if (!state.kpis.length) {
+        grid.innerHTML = '<div id="empty">No data</div>';
+        return;
+      }
+
+      grid.innerHTML = state.kpis
+        .map((kpi) => {
+          const delta = kpi.delta;
+          let deltaHtml = "";
+          if (delta !== undefined && delta !== null) {
+            const cls = delta > 0 ? "up" : delta < 0 ? "down" : "";
+            const sign = delta > 0 ? "+" : "";
+            deltaHtml = `<div class="delta ${cls}">${sign}${delta}%</div>`;
+          }
+          return `
+            <div class="card">
+              <div class="label">${escapeHtml(kpi.label)}</div>
+              <div class="value">${formatValue(kpi.value)}${kpi.unit ? `<span class="unit">${escapeHtml(kpi.unit)}</span>` : ""}</div>
+              ${deltaHtml}
+            </div>`;
+        })
+        .join("");
+    }
+
+    function formatValue(v) {
+      if (typeof v !== "number") return escapeHtml(v);
+      if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(2) + "M";
+      if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(1) + "k";
+      return String(v);
+    }
+
+    function escapeHtml(v) {
+      return String(v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    window.addEventListener("message", (e) => {
+      if (!e.data || typeof e.data !== "object") return;
+      if (e.data.type === "hydrate") render(e.data.data);
+      if (e.data.type === "append") appendRows(e.data.data);
+    });
+  </script>
+</body>
+</html>
