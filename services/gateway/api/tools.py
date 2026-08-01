@@ -12,7 +12,12 @@ async def tools_list(request: Request):
     """Dynamic tool discovery for llm-agent — OpenAI-compatible function
     schema, so adding a tool to ecommerce-mcp-server needs no agent changes."""
     gateway = request.app.state.gateway
-    tools = await gateway.list_tools()
+    metrics = request.app.state.metrics
+    try:
+        tools = await gateway.list_tools()
+    except Exception as e:
+        metrics["errors"] += 1
+        raise HTTPException(status_code=502, detail=f"MCP server unreachable: {e}") from e
     return [
         {
             "type": "function",
@@ -70,7 +75,12 @@ async def tools_call(req: ToolCallRequest, request: Request):
         "data": data,
         "meta": guard_meta,
     }
-    await chat_history.update_artifact(req.chat_id, req.message_id, artifact)
+    try:
+        await chat_history.update_artifact(req.chat_id, req.message_id, artifact)
+    except Exception:
+        # History persistence is best-effort — the caller still needs this
+        # artifact to answer the user even if Redis is unreachable right now.
+        metrics["errors"] += 1
 
     return ToolCallResponse(
         template_ref=resource_link_uri,

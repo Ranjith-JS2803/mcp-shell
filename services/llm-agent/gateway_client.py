@@ -1,6 +1,8 @@
 """The only thing in llm-agent that talks HTTP to gateway — tool discovery,
-tool calls, and chat-history writes. One persistent httpx client, opened
-at startup and reused, same pattern as gateway's own MCP session."""
+tool calls, and the one history write llm-agent owns (the final reply;
+gateway creates the entry itself before ever calling llm-agent). One
+persistent httpx client, opened at startup and reused, same pattern as
+gateway's own MCP session."""
 
 import httpx
 
@@ -34,14 +36,6 @@ async def call_tool(tool_name: str, arguments: dict, chat_id: str, message_id: s
     )
     resp.raise_for_status()
     return resp.json()
-
-
-async def create_history_message(chat_id: str, message_id: str, user_query: str) -> None:
-    resp = await _client.post(
-        "/history",
-        json={"chat_id": chat_id, "message_id": message_id, "user_query": user_query},
-    )
-    resp.raise_for_status()
 
 
 async def update_history_reply(chat_id: str, message_id: str, reply: str) -> None:

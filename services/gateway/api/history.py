@@ -1,18 +1,16 @@
 from fastapi import APIRouter, HTTPException
 
 from components import chat_history
-from models.history import CreateMessageRequest, UpdateReplyRequest
+from models.history import UpdateReplyRequest
 
 router = APIRouter()
 
 
-@router.post("/history")
-async def create_message(req: CreateMessageRequest):
-    return await chat_history.create_message(req.chat_id, req.message_id, req.user_query)
-
-
 @router.patch("/history/{chat_id}/{message_id}")
 async def update_reply(chat_id: str, message_id: str, req: UpdateReplyRequest):
+    """The one API llm-agent calls to write back a message's final
+    response — creation happens in gateway itself, before llm-agent is
+    ever invoked, so this is the only history write llm-agent needs."""
     await chat_history.update_reply(chat_id, message_id, req.reply)
     return {"status": "ok"}
 

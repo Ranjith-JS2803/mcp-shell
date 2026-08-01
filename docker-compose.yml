@@ -26,6 +26,7 @@ services:
     environment:
       MCP_SERVER_URL: http://ecommerce-mcp-server:8002/mcp
       REDIS_URL: redis://redis:6379/0
+      LLM_AGENT_URL: http://llm-agent:8004
     depends_on:
       - ecommerce-mcp-server
       - redis
@@ -51,7 +52,7 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - llm-agent
+      - gateway
 
 volumes:
   mcp-data:
