@@ -1,35 +1,20 @@
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request
 
-import snapshots
-import template_cache
-from mcp_client import MCPClient
-from schemas import ToolCallMeta, ToolCallRequest, ToolCallResponse
-from size_guard import PayloadTooLarge, apply_size_guard
+from components import chat_history
+from components.mcp_gateway import PayloadTooLarge
+from models.tool_call import ToolCallMeta, ToolCallRequest, ToolCallResponse
 
-mcp_client = MCPClient()
-
-metrics = {"tool_calls": 0, "truncation_events": 0, "errors": 0}
+router = APIRouter()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await mcp_client.connect()
-    yield
-    await mcp_client.close()
-
-
-app = FastAPI(title="mcp-shell mcp-gateway", lifespan=lifespan)
-
-
-@app.get("/tools/list")
-async def tools_list():
+@router.get("/tools/list")
+async def tools_list(request: Request):
     """Dynamic tool discovery for llm-agent — OpenAI-compatible function
     schema, so adding a tool to ecommerce-mcp-server needs no agent changes."""
-    tools = await mcp_client.list_tools()
+    gateway = request.app.state.gateway
+    tools = await gateway.list_tools()
     return [
         {
             "type": "function",
@@ -43,11 +28,14 @@ async def tools_list():
     ]
 
 
-@app.post("/tools/call", response_model=ToolCallResponse)
-async def tools_call(req: ToolCallRequest):
+@router.post("/tools/call", response_model=ToolCallResponse)
+async def tools_call(req: ToolCallRequest, request: Request):
+    gateway = request.app.state.gateway
+    metrics = request.app.state.metrics
+
     metrics["tool_calls"] += 1
     try:
-        result = await mcp_client.call_tool(req.tool_name, req.arguments)
+        result = await gateway.call_tool(req.tool_name, req.arguments)
     except Exception as e:
         metrics["errors"] += 1
         raise HTTPException(status_code=502, detail=f"MCP server call failed: {e}") from e
@@ -65,7 +53,7 @@ async def tools_call(req: ToolCallRequest):
         raise HTTPException(status_code=502, detail=summary or "Tool call returned an error")
 
     try:
-        data, guard_meta = apply_size_guard(result.structured_content)
+        data, guard_meta = gateway.apply_size_guard(result.structured_content)
     except PayloadTooLarge as e:
         metrics["errors"] += 1
         raise HTTPException(status_code=413, detail=str(e)) from e
@@ -76,13 +64,11 @@ async def tools_call(req: ToolCallRequest):
     template_html = None
     cache_hit = False
     if resource_link_uri:
-        template_html, cache_hit = await template_cache.get_template(
-            resource_link_uri, lambda: mcp_client.read_resource(resource_link_uri)
-        )
+        template_html, cache_hit = await gateway.get_template(resource_link_uri)
 
-    snapshot_id = snapshots.new_snapshot_id()
+    snapshot_id = chat_history.new_snapshot_id()
     created_at = datetime.now(timezone.utc).isoformat()
-    await snapshots.write_snapshot(
+    await chat_history.write_snapshot(
         snapshot_id=snapshot_id,
         chat_id=req.chat_id,
         msg_id=req.msg_id,
@@ -101,21 +87,3 @@ async def tools_call(req: ToolCallRequest):
         summary=summary,
         meta=ToolCallMeta(cache_hit=cache_hit, **guard_meta),
     )
-
-
-@app.get("/health")
-async def health():
-    mcp_ok = await mcp_client.ping()
-    redis_ok = await snapshots.ping()
-    status = "ok" if mcp_ok and redis_ok else "degraded"
-    body = {"status": status, "mcp_server": mcp_ok, "redis": redis_ok}
-    return JSONResponse(body, status_code=200 if status == "ok" else 503)
-
-
-@app.get("/metrics")
-async def get_metrics():
-    return {
-        **metrics,
-        "template_cache_hits": template_cache.hits,
-        "template_cache_misses": template_cache.misses,
-    }
