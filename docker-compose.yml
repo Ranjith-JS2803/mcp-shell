@@ -14,11 +14,15 @@ services:
     volumes:
       - mcp-data:/app/data
 
-  mcp-gateway:
+  gateway:
     build:
-      context: ./services/mcp-gateway
+      context: .
+      dockerfile: services/gateway/Dockerfile
     ports:
       - "8003:8003"
+    environment:
+      MCP_SERVER_URL: http://ecommerce-mcp-server:8002/mcp
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       - ecommerce-mcp-server
       - redis
@@ -31,7 +35,7 @@ services:
     env_file:
       - .env
     depends_on:
-      - mcp-gateway
+      - gateway
 
   chat-interface:
     build:

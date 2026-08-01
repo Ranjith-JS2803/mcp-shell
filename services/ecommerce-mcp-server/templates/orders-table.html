@@ -37,19 +37,21 @@
   <div id="footer"></div>
 
   <script>
-    let state = { columns: [], rows: [], total_count: 0, cursor: 0, next_cursor: null };
-    let dataSourceRef = null;
+    // This template is deliberately the only thing that understands
+    // pagination — it just relays whatever `next_ref` the mcp-server hands
+    // it back to the parent, and stops when `next_ref` is absent. The
+    // parent (chat-interface) never inspects or builds that URI itself.
+    let state = { columns: [], rows: [], total_count: 0, next_ref: null };
     let sort = { index: null, dir: 1 };
 
     function render(data) {
       state = { ...state, ...data };
-      dataSourceRef = data.data_source_ref || dataSourceRef;
       draw();
     }
 
     function appendRows(data) {
       state.rows = state.rows.concat(data.rows || []);
-      state.next_cursor = data.next_cursor ?? null;
+      state.next_ref = data.next_ref ?? null;
       state.total_count = data.total_count ?? state.total_count;
       draw();
     }
@@ -94,20 +96,16 @@
 
       wrap.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 
-      const shown = state.rows.length;
-      const canLoadMore = state.next_cursor !== null && state.next_cursor !== undefined;
+      const canLoadMore = !!state.next_ref;
       footer.innerHTML = `
-        <span>${shown} of ${state.total_count} rows</span>
+        <span>${state.rows.length} of ${state.total_count} rows</span>
         <button id="load-more" ${canLoadMore ? "" : "disabled"}>Load more</button>`;
       document.getElementById("load-more").onclick = loadMore;
     }
 
     function loadMore() {
-      if (state.next_cursor === null || state.next_cursor === undefined) return;
-      window.parent.postMessage(
-        { type: "request_data", cursor: state.next_cursor, source: dataSourceRef },
-        "*"
-      );
+      if (!state.next_ref) return;
+      window.parent.postMessage({ type: "request_data", source: state.next_ref }, "*");
     }
 
     function escapeHtml(v) {

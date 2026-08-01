@@ -20,11 +20,11 @@ ps:
 
 test:
 	docker compose run --rm ecommerce-mcp-server uv run pytest
-	docker compose run --rm mcp-gateway uv run pytest
+	docker compose run --rm gateway uv run pytest
 
 lint:
 	docker compose run --rm ecommerce-mcp-server uv run ruff check .
-	docker compose run --rm mcp-gateway uv run ruff check .
+	docker compose run --rm gateway uv run ruff check .
 
 clean:
 	docker compose down -v --remove-orphans
