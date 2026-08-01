@@ -1,11 +1,13 @@
 services:
   redis:
+    container_name: mcp-shell-redis
     image: redis/redis-stack:7.4.0-v8
     ports:
       - "6379:6379"
       - "8001:8001"   # RedisInsight
 
   ecommerce-mcp-server:
+    container_name: ecommerce-mcp-server
     build:
       context: .
       dockerfile: services/ecommerce-mcp-server/Dockerfile
@@ -15,6 +17,7 @@ services:
       - mcp-data:/app/data
 
   gateway:
+    container_name: gateway
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
@@ -28,16 +31,21 @@ services:
       - redis
 
   llm-agent:
+    container_name: llm-agent
     build:
-      context: ./services/llm-agent
+      context: .
+      dockerfile: services/llm-agent/Dockerfile
     ports:
       - "8004:8004"
+    environment:
+      GATEWAY_URL: http://gateway:8003
     env_file:
       - .env
     depends_on:
       - gateway
 
   chat-interface:
+    container_name: chat-interface
     build:
       context: ./chat-interface
     ports:

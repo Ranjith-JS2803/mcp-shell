@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api import system, tools
+from api import history, system, tools
 from components.mcp_gateway import MCPGateway
 
 
@@ -19,3 +19,4 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="mcp-shell gateway", lifespan=lifespan)
 app.include_router(tools.router)
 app.include_router(system.router)
+app.include_router(history.router)

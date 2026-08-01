@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, HTTPException, Request
 
 from components import chat_history
@@ -66,21 +64,15 @@ async def tools_call(req: ToolCallRequest, request: Request):
     if resource_link_uri:
         template_html, cache_hit = await gateway.get_template(resource_link_uri)
 
-    snapshot_id = chat_history.new_snapshot_id()
-    created_at = datetime.now(timezone.utc).isoformat()
-    await chat_history.write_snapshot(
-        snapshot_id=snapshot_id,
-        chat_id=req.chat_id,
-        msg_id=req.msg_id,
-        template_ref=resource_link_uri,
-        template_html=template_html,
-        structured_content=data,
-        meta=guard_meta,
-        created_at=created_at,
-    )
+    artifact = {
+        "template_ref": resource_link_uri,
+        "template_html": template_html,
+        "data": data,
+        "meta": guard_meta,
+    }
+    await chat_history.update_artifact(req.chat_id, req.message_id, artifact)
 
     return ToolCallResponse(
-        snapshot_id=snapshot_id,
         template_ref=resource_link_uri,
         template_html=template_html,
         data=data,
