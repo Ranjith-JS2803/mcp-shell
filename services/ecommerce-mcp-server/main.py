@@ -11,42 +11,64 @@ mcp = MCPServer(
     name="ecommerce-mcp-server",
     instructions=(
         "E-commerce data tools backed by a seeded 50k-row SQLite dataset. "
-        "Every tool returns a template resource_link plus a small aggregated "
-        "structuredContent payload — never raw rows."
+        "Each tool owns its own resource(s) independently — no shared "
+        "template registry or ref-resolving between them."
     ),
 )
 
-mcp.tool(name="revenue_by_region", description="Aggregated revenue per region for a given period.")(
-    tools.revenue_by_region
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+mcp.tool(name="revenue_chart", description="Revenue by region as an HTML bar chart.")(tools.revenue_chart)
+mcp.tool(name="orders_report_table", description="Paginated order list rendered as an HTML table.")(
+    tools.orders_report_table
 )
-mcp.tool(name="monthly_revenue_trend", description="Monthly revenue totals over the last N months.")(
-    tools.monthly_revenue_trend
+mcp.tool(name="generate_sales_report", description="Generates a sales report, streamed as simulated PDF bytes.")(
+    tools.generate_sales_report
 )
-mcp.tool(name="top_products", description="Top N products by revenue or quantity.")(tools.top_products)
-mcp.tool(name="orders_table", description="Paginated order list with status/region/date filters.")(
-    tools.orders_table
+mcp.tool(name="system_status", description="Plain-text health check of the server and dataset.")(
+    tools.system_status
 )
-mcp.tool(name="kpi_summary", description="Total revenue, order count, and average order value.")(
-    tools.kpi_summary
-)
-mcp.tool(name="category_breakdown", description="Revenue split by product category.")(tools.category_breakdown)
+
+# ---------------------------------------------------------------------------
+# 1. revenue_chart's resource — one static template, nothing else
+# ---------------------------------------------------------------------------
 
 
-@mcp.resource("template://{name}", mime_type="text/html")
-def get_template(name: str) -> str:
-    """Serves a self-contained artifact template by name (e.g. bar-chart-v1)."""
-    path = (TEMPLATES_DIR / f"{name}.html").resolve()
-    if path.parent != TEMPLATES_DIR or not path.is_file():
-        raise FileNotFoundError(f"No such template: {name}")
-    return path.read_text()
+@mcp.resource("chart-template://revenue-chart", mime_type="text/html")
+def get_revenue_chart_template() -> str:
+    return (TEMPLATES_DIR / "revenue-chart.html").read_text()
 
 
-@mcp.resource("data://{ref}")
-def get_data(ref: str) -> dict:
-    """Replays a stateless data_source_ref (e.g. orders_table?region=North&cursor=50)
-    and returns the matching page of structuredContent — no session state, works
-    the same whether called seconds or days after the original tool call."""
-    return tools.resolve_ref(ref)
+# ---------------------------------------------------------------------------
+# 2. orders_report_table's resources — its own template + its own pager
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("orders-table-template://", mime_type="text/html")
+def get_orders_table_template() -> str:
+    return (TEMPLATES_DIR / "orders-table.html").read_text()
+
+
+@mcp.resource("orders-table-page://{page}{?status,region}")
+def get_orders_table_page(page: str, status: str | None = None, region: str | None = None) -> dict:
+    return tools.resolve_orders_table_page(page, status, region)
+
+
+# ---------------------------------------------------------------------------
+# 3. generate_sales_report's resources — its own viewer + its own pager
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("pdf-report-template://", mime_type="text/html")
+def get_pdf_report_template() -> str:
+    return (TEMPLATES_DIR / "pdf-report-viewer.html").read_text()
+
+
+@mcp.resource("report-bytes-page://{report_id}/{chunk}{?period}")
+def get_report_bytes_page(report_id: str, chunk: str, period: str | None = None) -> dict:
+    return tools.resolve_report_bytes_page(report_id, chunk, period)
 
 
 if __name__ == "__main__":

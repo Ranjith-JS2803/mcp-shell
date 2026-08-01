@@ -12,9 +12,8 @@
   }
   #title { font-size: 13px; font-weight: 600; margin: 0 0 8px 2px; opacity: 0.85; }
   svg { width: 100%; height: auto; display: block; overflow: visible; }
-  .line { fill: none; stroke: #5B8DEF; stroke-width: 2.5; }
-  .area { fill: #5B8DEF; opacity: 0.08; }
-  .point { fill: #5B8DEF; }
+  .bar { fill: #5B8DEF; }
+  .bar:hover { fill: #4874d1; }
   .label { font-size: 11px; fill: currentColor; opacity: 0.75; }
   .value { font-size: 11px; fill: currentColor; font-weight: 600; }
   .axis-line { stroke: currentColor; stroke-opacity: 0.15; }
@@ -26,75 +25,57 @@
   <div id="chart"></div>
 
   <script>
-    let state = { labels: [], values: [], title: "" };
+    let state = { categories: [], values: [], title: "" };
 
     function render(data) {
       state = { ...state, ...data };
       draw();
     }
 
-    function appendRows(data) {
-      state.labels = state.labels.concat(data.labels || []);
-      state.values = state.values.concat(data.values || []);
-      draw();
-    }
-
     function draw() {
       document.getElementById("title").textContent = state.title || "";
       const chartEl = document.getElementById("chart");
-      const { labels, values } = state;
+      const { categories, values } = state;
 
-      if (!labels.length) {
+      if (!categories.length) {
         chartEl.innerHTML = '<div id="empty">No data</div>';
         return;
       }
 
       const width = chartEl.clientWidth || 600;
       const height = 320;
-      const padding = { top: 24, right: 16, bottom: 36, left: 16 };
+      const padding = { top: 16, right: 12, bottom: 36, left: 12 };
       const plotW = width - padding.left - padding.right;
       const plotH = height - padding.top - padding.bottom;
       const maxVal = Math.max(...values, 1);
-      const minVal = Math.min(...values, 0);
-      const range = maxVal - minVal || 1;
-      const step = labels.length > 1 ? plotW / (labels.length - 1) : 0;
+      const barGap = 10;
+      const barW = Math.max((plotW - barGap * (categories.length - 1)) / categories.length, 4);
 
-      const points = values.map((v, i) => {
-        const x = padding.left + i * step;
-        const y = padding.top + plotH - ((v - minVal) / range) * plotH;
-        return [x, y];
+      let bars = "";
+      let labels = "";
+      categories.forEach((cat, i) => {
+        const val = values[i] || 0;
+        const barH = (val / maxVal) * plotH;
+        const x = padding.left + i * (barW + barGap);
+        const y = padding.top + (plotH - barH);
+        bars += `<rect class="bar" x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, 1)}" rx="3"></rect>`;
+        bars += `<text class="value" x="${x + barW / 2}" y="${y - 6}" text-anchor="middle">${formatValue(val)}</text>`;
+        labels += `<text class="label" x="${x + barW / 2}" y="${height - padding.bottom + 16}" text-anchor="middle">${truncate(cat)}</text>`;
       });
 
-      const linePath = points.map((p, i) => (i === 0 ? "M" : "L") + p[0] + "," + p[1]).join(" ");
       const baseline = padding.top + plotH;
-      const areaPath = `${linePath} L${points[points.length - 1][0]},${baseline} L${points[0][0]},${baseline} Z`;
-
-      const dots = points
-        .map(([x, y]) => `<circle class="point" cx="${x}" cy="${y}" r="3"></circle>`)
-        .join("");
-
-      const valueLabels = points
-        .map(([x, y], i) => `<text class="value" x="${x}" y="${y - 10}" text-anchor="middle">${formatValue(values[i])}</text>`)
-        .join("");
-
-      const axisLabels = labels
-        .map((l, i) => `<text class="label" x="${points[i][0]}" y="${height - padding.bottom + 16}" text-anchor="middle">${truncate(l)}</text>`)
-        .join("");
 
       chartEl.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
           <line class="axis-line" x1="${padding.left}" y1="${baseline}" x2="${width - padding.right}" y2="${baseline}"></line>
-          <path class="area" d="${areaPath}"></path>
-          <path class="line" d="${linePath}"></path>
-          ${dots}
-          ${valueLabels}
-          ${axisLabels}
+          ${bars}
+          ${labels}
         </svg>`;
     }
 
     function truncate(s) {
       s = String(s);
-      return s.length > 10 ? s.slice(0, 9) + "…" : s;
+      return s.length > 12 ? s.slice(0, 11) + "…" : s;
     }
 
     function formatValue(v) {
@@ -106,7 +87,6 @@
     window.addEventListener("message", (e) => {
       if (!e.data || typeof e.data !== "object") return;
       if (e.data.type === "hydrate") render(e.data.data);
-      if (e.data.type === "append") appendRows(e.data.data);
     });
 
     window.addEventListener("resize", draw);

@@ -1,44 +1,30 @@
-"""The 6 MCP tools. Every function returns a CallToolResult carrying a
-resource_link (which template to render) + a small aggregated
-structuredContent payload — never raw rows.
+"""The 4 MCP tools. Each is fully self-contained — its own resource_link,
+its own pagination scheme (where it has one), no shared ref-parsing or
+template registry between them. That's deliberate: every use case should
+be readable in isolation.
 """
+
+from urllib.parse import urlencode
 
 from mcp.types import CallToolResult, ResourceLink, TextContent
 
 from periods import parse_period
-from refs import parse_ref, build_ref
 from seed.db import get_connection
 
-TEMPLATES = {
-    "bar-chart-v1": ("template://bar-chart-v1", "Bar Chart"),
-    "line-chart-v1": ("template://line-chart-v1", "Line Chart"),
-    "table-v1": ("template://table-v1", "Table"),
-    "kpi-card-v1": ("template://kpi-card-v1", "KPI Card"),
-}
-
-MAX_ROWS = 500  # belt-and-suspenders — the gateway also enforces this, but a
-# tool should never even hand it something to enforce against.
+PAGE_SIZE = 50
+REPORT_CHUNK_SIZE = 3  # lines of the simulated report per chunk
 
 
-def _result(template: str, structured_content: dict, summary: str) -> CallToolResult:
-    uri, name = TEMPLATES[template]
-    return CallToolResult(
-        content=[
-            ResourceLink(name=name, uri=uri, mimeType="text/html"),
-            TextContent(type="text", text=summary),
-        ],
-        structured_content=structured_content,
-    )
+# ---------------------------------------------------------------------------
+# 1. revenue_chart — HTML chart, no pagination
+# ---------------------------------------------------------------------------
 
 
-def revenue_by_region(period: str | None = None) -> CallToolResult:
+def revenue_chart(period: str | None = None) -> CallToolResult:
     date_range = parse_period(period)
     conn = get_connection()
     try:
-        sql = (
-            "SELECT region, SUM(total_amount) AS revenue FROM orders "
-            "WHERE status != 'cancelled'"
-        )
+        sql = "SELECT region, SUM(total_amount) AS revenue FROM orders WHERE status != 'cancelled'"
         params: list = []
         if date_range:
             sql += " AND order_date >= ? AND order_date < ?"
@@ -50,98 +36,26 @@ def revenue_by_region(period: str | None = None) -> CallToolResult:
 
     categories = [r["region"] for r in rows]
     values = [round(r["revenue"], 2) for r in rows]
-    total_rows = len(rows)
 
-    return _result(
-        "bar-chart-v1",
-        {
+    return CallToolResult(
+        content=[
+            ResourceLink(name="Revenue Chart", uri="chart-template://revenue-chart", mimeType="text/html"),
+            TextContent(type="text", text=f"Revenue by region{f' for {period}' if period else ''}."),
+        ],
+        structured_content={
             "categories": categories,
             "values": values,
-            "total_rows": total_rows,
-            "data_source_ref": build_ref("revenue_by_region", period=period),
+            "title": f"Revenue by Region{f' — {period}' if period else ''}",
         },
-        f"Revenue by region{f' for {period}' if period else ''} across {total_rows} regions.",
     )
 
 
-def monthly_revenue_trend(months: int = 12) -> CallToolResult:
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT strftime('%Y-%m', order_date) AS month, SUM(total_amount) AS revenue
-            FROM orders
-            WHERE status != 'cancelled'
-            GROUP BY month
-            ORDER BY month DESC
-            LIMIT ?
-            """,
-            (months,),
-        ).fetchall()
-    finally:
-        conn.close()
-
-    rows = list(reversed(rows))
-    labels = [r["month"] for r in rows]
-    values = [round(r["revenue"], 2) for r in rows]
-
-    return _result(
-        "line-chart-v1",
-        {
-            "labels": labels,
-            "values": values,
-            "total_rows": len(rows),
-            "data_source_ref": build_ref("monthly_revenue_trend", months=months),
-        },
-        f"Monthly revenue trend over the last {len(rows)} months.",
-    )
+# ---------------------------------------------------------------------------
+# 2. orders_report_table — HTML table with page-by-page pagination
+# ---------------------------------------------------------------------------
 
 
-def top_products(n: int = 10, by: str = "revenue") -> CallToolResult:
-    n = min(n, MAX_ROWS)
-    metric_sql = "SUM(oi.quantity * oi.unit_price)" if by == "revenue" else "SUM(oi.quantity)"
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT p.name AS product_name, {metric_sql} AS metric
-            FROM order_items oi
-            JOIN orders o ON o.order_id = oi.order_id
-            JOIN products p ON p.product_id = oi.product_id
-            WHERE o.status != 'cancelled'
-            GROUP BY p.product_id
-            ORDER BY metric DESC
-            LIMIT ?
-            """,
-            (n,),
-        ).fetchall()
-    finally:
-        conn.close()
-
-    categories = [r["product_name"] for r in rows]
-    values = [round(r["metric"], 2) for r in rows]
-
-    return _result(
-        "bar-chart-v1",
-        {
-            "categories": categories,
-            "values": values,
-            "total_rows": len(rows),
-            "data_source_ref": build_ref("top_products", n=n, by=by),
-        },
-        f"Top {len(rows)} products by {by}.",
-    )
-
-
-def orders_table(
-    status: str | None = None,
-    region: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    cursor: int = 0,
-    limit: int = 50,
-) -> CallToolResult:
-    limit = min(limit, MAX_ROWS)
+def _orders_table_page(page: int, status: str | None, region: str | None) -> dict:
     where = []
     params: list = []
     if status:
@@ -150,19 +64,12 @@ def orders_table(
     if region:
         where.append("region = ?")
         params.append(region)
-    if date_from:
-        where.append("order_date >= ?")
-        params.append(date_from)
-    if date_to:
-        where.append("order_date < ?")
-        params.append(date_to)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
+    offset = (page - 1) * PAGE_SIZE
     conn = get_connection()
     try:
-        total_count = conn.execute(
-            f"SELECT COUNT(*) AS n FROM orders {where_sql}", params
-        ).fetchone()["n"]
+        total_count = conn.execute(f"SELECT COUNT(*) AS n FROM orders {where_sql}", params).fetchone()["n"]
         rows = conn.execute(
             f"""
             SELECT order_id, customer_id, order_date, status, total_amount, region
@@ -170,39 +77,52 @@ def orders_table(
             ORDER BY order_id
             LIMIT ? OFFSET ?
             """,
-            [*params, limit, cursor],
+            [*params, PAGE_SIZE, offset],
         ).fetchall()
     finally:
         conn.close()
 
     columns = ["order_id", "customer_id", "order_date", "status", "total_amount", "region"]
     row_values = [[r[c] for c in columns] for r in rows]
-    next_cursor = cursor + limit if cursor + limit < total_count else None
 
-    return _result(
-        "table-v1",
-        {
-            "columns": columns,
-            "rows": row_values,
-            "total_count": total_count,
-            "cursor": cursor,
-            "next_cursor": next_cursor,
-            "total_rows": len(rows),
-            "data_source_ref": build_ref(
-                "orders_table",
-                status=status,
-                region=region,
-                date_from=date_from,
-                date_to=date_to,
-                cursor=cursor,
-                limit=limit,
-            ),
-        },
-        f"Orders {cursor + 1}-{cursor + len(rows)} of {total_count}.",
+    next_ref = None
+    if offset + len(rows) < total_count:
+        query = {k: v for k, v in {"status": status, "region": region}.items() if v}
+        next_ref = f"orders-table-page://{page + 1}"
+        if query:
+            next_ref += f"?{urlencode(query)}"
+
+    return {
+        "columns": columns,
+        "rows": row_values,
+        "total_count": total_count,
+        "page": page,
+        "next_ref": next_ref,
+    }
+
+
+def orders_report_table(status: str | None = None, region: str | None = None) -> CallToolResult:
+    page_data = _orders_table_page(1, status, region)
+    return CallToolResult(
+        content=[
+            ResourceLink(name="Orders Table", uri="orders-table-template://", mimeType="text/html"),
+            TextContent(type="text", text=f"Orders page 1 of {page_data['total_count']} total rows."),
+        ],
+        structured_content=page_data,
     )
 
 
-def kpi_summary(period: str | None = None) -> CallToolResult:
+def resolve_orders_table_page(page: str, status: str | None = None, region: str | None = None) -> dict:
+    """Backs the orders-table-page://{page}{?status,region} resource."""
+    return _orders_table_page(int(page), status, region)
+
+
+# ---------------------------------------------------------------------------
+# 3. generate_sales_report — simulated PDF byte stream, auto-paginated
+# ---------------------------------------------------------------------------
+
+
+def _report_lines(report_id: str, period: str | None) -> list[str]:
     date_range = parse_period(period)
     conn = get_connection()
     try:
@@ -218,79 +138,80 @@ def kpi_summary(period: str | None = None) -> CallToolResult:
     finally:
         conn.close()
 
-    kpis = [
-        {"label": "Total Revenue", "value": round(row["revenue"] or 0, 2), "unit": "USD"},
-        {"label": "Order Count", "value": row["order_count"] or 0},
-        {"label": "Avg Order Value", "value": round(row["avg_order_value"] or 0, 2), "unit": "USD"},
+    label = f" — {period}" if period else ""
+    return [
+        f"SALES REPORT{label}",
+        f"Report ID: {report_id}",
+        "=" * 40,
+        f"Total Revenue:     ${row['revenue'] or 0:,.2f}",
+        f"Order Count:       {row['order_count'] or 0}",
+        f"Avg Order Value:   ${row['avg_order_value'] or 0:,.2f}",
+        "-" * 40,
+        "This is a simulated report body — bytes are",
+        "streamed chunk-by-chunk to demonstrate the",
+        "same pagination contract as orders_report_table,",
+        "just applied to a binary/document artifact",
+        "instead of tabular rows.",
+        "=" * 40,
+        "End of report.",
     ]
 
-    return _result(
-        "kpi-card-v1",
-        {
-            "kpis": kpis,
-            "total_rows": 1,
-            "data_source_ref": build_ref("kpi_summary", period=period),
-        },
-        f"KPI summary{f' for {period}' if period else ''}.",
+
+def _report_chunk(report_id: str, period: str | None, chunk: int) -> dict:
+    lines = _report_lines(report_id, period)
+    total_chunks = -(-len(lines) // REPORT_CHUNK_SIZE)  # ceil div
+    start = (chunk - 1) * REPORT_CHUNK_SIZE
+    chunk_lines = lines[start : start + REPORT_CHUNK_SIZE]
+
+    next_ref = None
+    if chunk < total_chunks:
+        next_ref = f"report-bytes-page://{report_id}/{chunk + 1}"
+        if period:
+            next_ref += f"?{urlencode({'period': period})}"
+
+    return {
+        "report_id": report_id,
+        "chunk": chunk,
+        "total_chunks": total_chunks,
+        "data": "\n".join(chunk_lines) + "\n",
+        "next_ref": next_ref,
+    }
+
+
+def generate_sales_report(period: str | None = None) -> CallToolResult:
+    report_id = f"rep_{abs(hash((period, 'sales'))) % 100000:05d}"
+    first_chunk = _report_chunk(report_id, period, 1)
+    return CallToolResult(
+        content=[
+            ResourceLink(name="Sales Report", uri="pdf-report-template://", mimeType="text/html"),
+            TextContent(type="text", text=f"Generated sales report {report_id}{f' for {period}' if period else ''}."),
+        ],
+        structured_content=first_chunk,
     )
 
 
-def category_breakdown(period: str | None = None) -> CallToolResult:
-    date_range = parse_period(period)
+def resolve_report_bytes_page(report_id: str, chunk: str, period: str | None = None) -> dict:
+    """Backs the report-bytes-page://{report_id}/{chunk}{?period} resource."""
+    return _report_chunk(report_id, period, int(chunk))
+
+
+# ---------------------------------------------------------------------------
+# 4. system_status — plain text, no resource_link, no structured content
+# ---------------------------------------------------------------------------
+
+
+def system_status() -> CallToolResult:
     conn = get_connection()
     try:
-        sql = (
-            "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price) AS revenue "
-            "FROM order_items oi "
-            "JOIN orders o ON o.order_id = oi.order_id "
-            "JOIN products p ON p.product_id = oi.product_id "
-            "WHERE o.status != 'cancelled'"
-        )
-        params: list = []
-        if date_range:
-            sql += " AND o.order_date >= ? AND o.order_date < ?"
-            params.extend(date_range)
-        sql += " GROUP BY p.category ORDER BY revenue DESC"
-        rows = conn.execute(sql, params).fetchall()
+        order_count = conn.execute("SELECT COUNT(*) AS n FROM orders").fetchone()["n"]
     finally:
         conn.close()
 
-    categories = [r["category"] for r in rows]
-    values = [round(r["revenue"], 2) for r in rows]
-
-    return _result(
-        "bar-chart-v1",
-        {
-            "categories": categories,
-            "values": values,
-            "total_rows": len(rows),
-            "data_source_ref": build_ref("category_breakdown", period=period),
-        },
-        f"Revenue by category{f' for {period}' if period else ''} across {len(rows)} categories.",
+    return CallToolResult(
+        content=[
+            TextContent(
+                type="text",
+                text=f"mcp-shell ecommerce-mcp-server is up. {order_count} orders in the dataset.",
+            )
+        ],
     )
-
-
-# Registry + int-typed param names, so a data_source_ref string (built by
-# build_ref) can be parsed back into a real call — this is what the data://
-# resource uses to serve pagination/drill-down without going through
-# tools/call again.
-REGISTRY = {
-    "revenue_by_region": revenue_by_region,
-    "monthly_revenue_trend": monthly_revenue_trend,
-    "top_products": top_products,
-    "orders_table": orders_table,
-    "kpi_summary": kpi_summary,
-    "category_breakdown": category_breakdown,
-}
-
-INT_PARAMS = {"months", "n", "cursor", "limit"}
-
-
-def resolve_ref(ref: str) -> dict:
-    """Replays a data_source_ref and returns its structuredContent."""
-    tool_name, params = parse_ref(ref)
-    if tool_name not in REGISTRY:
-        raise ValueError(f"Unknown tool in data_source_ref: {tool_name}")
-    typed_params = {k: (int(v) if k in INT_PARAMS else v) for k, v in params.items()}
-    result = REGISTRY[tool_name](**typed_params)
-    return result.structured_content
