@@ -1,12 +1,13 @@
-"""Redis-backed snapshot writes — the frozen chat-history record for a
-single artifact, keyed by snapshot_id and tagged with chat_id/msg_id so a
-history view can be built later. No TTL for now: permanent until told
-otherwise.
+"""Redis JSON chat-history — one document per (chat_id, message_id),
+holding the user's query, the assistant's reply, and any artifact
+produced by a tool call, all in one place. There is no separate snapshot
+store: an artifact is just a field on the message it belongs to, and
+chat_id + message_id (already known to every caller) is the only address
+needed to fetch it back.
 """
 
-import json
 import os
-import uuid
+from datetime import datetime, timezone
 
 import redis.asyncio as redis
 
@@ -22,38 +23,72 @@ def get_client() -> redis.Redis:
     return _client
 
 
-def new_snapshot_id() -> str:
-    return f"snap_{uuid.uuid4().hex[:12]}"
+def _key(chat_id: str, message_id: str) -> str:
+    return f"chat-history:{chat_id}:{message_id}"
 
 
-async def write_snapshot(
-    snapshot_id: str,
-    chat_id: str,
-    msg_id: str,
-    template_ref: str | None,
-    template_html: str | None,
-    structured_content: dict | None,
-    meta: dict,
-    created_at: str,
-) -> None:
+def _index_key(chat_id: str) -> str:
+    return f"chat-history-index:{chat_id}"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def create_message(chat_id: str, message_id: str, user_query: str) -> dict:
+    """Called the moment a user query comes in — creates the document that
+    the reply and (if any) the artifact get merged into as they arrive."""
     client = get_client()
-    record = {
-        "snapshot_id": snapshot_id,
+    now = _now()
+    doc = {
         "chat_id": chat_id,
-        "msg_id": msg_id,
-        "template_ref": template_ref,
-        "template_html": template_html,
-        "data_snapshot": structured_content,
-        "meta": meta,
-        "created_at": created_at,
+        "message_id": message_id,
+        "user_query": user_query,
+        "reply": None,
+        "artifact": None,
+        "created_at": now,
+        "updated_at": now,
     }
-    await client.set(f"snapshot:{snapshot_id}", json.dumps(record))
+    await client.json().set(_key(chat_id, message_id), "$", doc)
+    await client.zadd(_index_key(chat_id), {message_id: datetime.now(timezone.utc).timestamp()})
+    return doc
 
 
-async def read_snapshot(snapshot_id: str) -> dict | None:
+async def update_reply(chat_id: str, message_id: str, reply: str) -> None:
     client = get_client()
-    raw = await client.get(f"snapshot:{snapshot_id}")
-    return json.loads(raw) if raw else None
+    key = _key(chat_id, message_id)
+    await client.json().set(key, "$.reply", reply)
+    await client.json().set(key, "$.updated_at", _now())
+
+
+async def update_artifact(chat_id: str, message_id: str, artifact: dict) -> None:
+    client = get_client()
+    key = _key(chat_id, message_id)
+    await client.json().set(key, "$.artifact", artifact)
+    await client.json().set(key, "$.updated_at", _now())
+
+
+async def get_message(chat_id: str, message_id: str) -> dict | None:
+    client = get_client()
+    return await client.json().get(_key(chat_id, message_id))
+
+
+async def get_chat_history(chat_id: str) -> list[dict]:
+    """Ordered by created_at (the zset score) — oldest first."""
+    client = get_client()
+    message_ids = await client.zrange(_index_key(chat_id), 0, -1)
+    if not message_ids:
+        return []
+    raw = await client.json().mget([_key(chat_id, mid) for mid in message_ids], "$")
+    # RedisJSON's MGET wraps each key's result in its own array (JSONPath
+    # can match multiple nodes per key) — flatten the one-doc-per-key case.
+    docs = []
+    for entry in raw:
+        if isinstance(entry, list):
+            docs.extend(entry)
+        elif entry is not None:
+            docs.append(entry)
+    return docs
 
 
 async def ping() -> bool:
