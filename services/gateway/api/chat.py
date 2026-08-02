@@ -14,10 +14,7 @@ def _fallback_response(req: ChatRequest, text: str) -> dict:
 
 
 async def _process_chat(req: ChatRequest, ws_manager: WebSocketManager) -> None:
-    """Runs after the HTTP response is already sent — the caller only got
-    an ack; this is what actually talks to llm-agent and delivers the
-    real answer over the socket the request named.
-    """
+    """Runs after the ack is sent — calls llm-agent, pushes the reply over the socket."""
     try:
         response = await llm_agent_client.send_chat(req.chat_id, req.message_id, req.socket_id, req.user_query)
     except Exception:
@@ -32,12 +29,7 @@ async def _process_chat(req: ChatRequest, ws_manager: WebSocketManager) -> None:
 
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks) -> dict:
-    """The frontend's only entrypoint for a chat turn. Creates the history
-    entry immediately, then hands off to llm-agent in the background —
-    the frontend never calls llm-agent directly, and the real reply
-    arrives over the WebSocket identified by socket_id rather than in
-    this HTTP response.
-    """
+    """Creates the history entry, hands off to llm-agent in the background, acks immediately."""
     try:
         await chat_history.create_message(req.chat_id, req.message_id, req.user_query)
     except Exception:
