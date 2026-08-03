@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api import chat, history, system, tools, ws
+from api import chat, history, resources, system, tools, ws
 from components import llm_agent_client
 from components.mcp_gateway import MCPGateway
 from components.websocket_manager import WebSocketManager
@@ -27,3 +27,4 @@ app.include_router(system.router)
 app.include_router(history.router)
 app.include_router(chat.router)
 app.include_router(ws.router)
+app.include_router(resources.router)
