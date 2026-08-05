@@ -1,4 +1,11 @@
-# chat-interface — React chat UI + iframe artifact renderer
+# chat-interface — React chat UI + sandboxed iframe artifact renderer
 FROM node:22-slim
 WORKDIR /app
-# TODO: fill in once the app is scaffolded (module 1)
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
