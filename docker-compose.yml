@@ -51,6 +51,10 @@ services:
       context: ./chat-interface
     ports:
       - "3000:3000"
+    environment:
+      # Consumed by the browser, not by this container — must be a
+      # host-reachable URL, not gateway's internal compose hostname.
+      VITE_GATEWAY_URL: http://localhost:8003
     depends_on:
       - gateway
 

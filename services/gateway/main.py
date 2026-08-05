@@ -1,6 +1,8 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api import chat, history, resources, system, tools, ws
 from components import llm_agent_client
@@ -22,6 +24,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="mcp-shell gateway", lifespan=lifespan)
+
+# The frontend is a separate origin (dev server on :3000, or wherever the
+# built app is served from) — without this, the browser blocks every
+# request the frontend makes, including the WebSocket's initial handshake.
+_frontend_origins = os.environ.get("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_frontend_origins.split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(tools.router)
 app.include_router(system.router)
 app.include_router(history.router)
