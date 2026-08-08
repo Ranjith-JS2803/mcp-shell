@@ -4,9 +4,11 @@ template registry between them. That's deliberate: every use case should
 be readable in isolation.
 """
 
+from typing import Annotated
 from urllib.parse import urlencode
 
 from mcp.types import CallToolResult, ResourceLink, TextContent
+from pydantic import Field
 
 from periods import parse_period
 from seed.db import get_connection
@@ -14,13 +16,26 @@ from seed.db import get_connection
 PAGE_SIZE = 50
 REPORT_CHUNK_SIZE = 3  # lines of the simulated report per chunk
 
+PeriodArg = Annotated[
+    str | None,
+    Field(
+        default=None,
+        description=(
+            "Optional period filter. Must be one of these exact formats: "
+            "'2026' (a whole year), '2026-Q3' (a quarter, Q1-Q4), or '2026-07' (a month). "
+            "Never a phrase like 'this quarter' or 'last year' — resolve those to a real "
+            "year/quarter/month yourself before calling this tool. Omit entirely for all-time."
+        ),
+    ),
+]
+
 
 # ---------------------------------------------------------------------------
 # 1. revenue_chart — HTML chart, no pagination
 # ---------------------------------------------------------------------------
 
 
-def revenue_chart(period: str | None = None) -> CallToolResult:
+def revenue_chart(period: PeriodArg = None) -> CallToolResult:
     date_range = parse_period(period)
     conn = get_connection()
     try:
@@ -178,7 +193,7 @@ def _report_chunk(report_id: str, period: str | None, chunk: int) -> dict:
     }
 
 
-def generate_sales_report(period: str | None = None) -> CallToolResult:
+def generate_sales_report(period: PeriodArg = None) -> CallToolResult:
     report_id = f"rep_{abs(hash((period, 'sales'))) % 100000:05d}"
     first_chunk = _report_chunk(report_id, period, 1)
     return CallToolResult(
