@@ -38,7 +38,10 @@ export default function ArtifactFrame({ templateHtml, data }) {
   return (
     <iframe
       ref={iframeRef}
-      sandbox="allow-scripts"
+      // allow-downloads only — no allow-same-origin, no allow-top-navigation,
+      // no allow-popups. Needed for the PDF report's <a download> link;
+      // doesn't grant anything beyond triggering a file download.
+      sandbox="allow-scripts allow-downloads"
       srcDoc={templateHtml}
       title="artifact"
       className="artifact-frame"

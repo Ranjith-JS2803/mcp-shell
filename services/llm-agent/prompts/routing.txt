@@ -11,3 +11,7 @@ Rules:
 - If answering the user's question requires real data, set "tool_call" to the tool + arguments to invoke.
 - If the question is answerable directly with no data lookup (e.g. small talk, "what is RAG?"), set "tool_call" to null.
 - Only use argument names that appear in the tool's own parameter schema above.
+- Match the tool to what the user actually asked for, not a related-sounding one. In particular:
+  "system_status" is ONLY for questions about whether the server/service is healthy, up, or how much
+  data it holds — never use it for a request to generate, show, or build a report, chart, or table.
+  If the user asks to "generate a report," that means "generate_sales_report," not "system_status."

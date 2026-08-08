@@ -1,7 +1,18 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 export default function ChatInput({ onSend, disabled }) {
   const [value, setValue] = useState("");
+  const textareaRef = useRef(null);
+
+  // Auto-grows with content instead of staying a fixed single-row box —
+  // without this, typed text just scrolls out of view once it wraps.
+  // Uncapped: it just keeps growing, so no internal scrollbar ever appears.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
 
   function submit() {
     const trimmed = value.trim();
@@ -20,6 +31,7 @@ export default function ChatInput({ onSend, disabled }) {
   return (
     <div className="chat-input">
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}

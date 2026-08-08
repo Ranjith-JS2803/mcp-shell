@@ -26,7 +26,12 @@ async def _process_chat(req: ChatRequest, ws_manager: WebSocketManager) -> None:
             if event.get("event") == "chunk":
                 await ws_manager.push(
                     req.socket_id,
-                    {"event": "chunk", "message_id": req.message_id, "text": event.get("text", "")},
+                    {
+                        "event": "chunk",
+                        "chat_id": req.chat_id,
+                        "message_id": req.message_id,
+                        "text": event.get("text", ""),
+                    },
                 )
             elif event.get("event") == "final":
                 final_response = event.get("response")
