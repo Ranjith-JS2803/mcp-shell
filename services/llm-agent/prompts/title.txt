@@ -1,0 +1,4 @@
+Generate a short title for this chat, based on the user's message below.
+
+Rules: at most 5 words, no punctuation at the end, no quotes, no markdown — plain text only.
+Describe what the conversation is about, not a literal repeat of the message.

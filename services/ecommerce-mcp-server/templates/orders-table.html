@@ -5,31 +5,28 @@
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; padding: 12px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
     background: Canvas; color: CanvasText;
+    display: flex; flex-direction: column; height: 100%;
   }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 6px 10px; white-space: nowrap; }
   thead th {
     cursor: pointer; user-select: none; font-weight: 600;
     border-bottom: 1px solid currentColor; opacity: 0.85;
+    position: sticky; top: 0; background: Canvas;
   }
   thead th:hover { opacity: 1; }
   .sort-arrow { opacity: 0.5; margin-left: 4px; font-size: 10px; }
   tbody tr:nth-child(odd) { background: rgba(127,127,127,0.06); }
   tbody td { border-bottom: 1px solid rgba(127,127,127,0.08); }
-  #footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; opacity: 0.75; }
-  #load-more {
-    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 6px;
-    border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; opacity: 0.85;
-  }
-  #load-more:hover { opacity: 1; }
-  #load-more:disabled { opacity: 0.35; cursor: default; }
+  #footer { flex: 0 0 auto; margin-top: 8px; font-size: 12px; opacity: 0.75; text-align: center; }
   #empty { font-size: 13px; opacity: 0.6; padding: 24px; text-align: center; }
-  #wrap { overflow-x: auto; }
+  #wrap { flex: 1 1 auto; overflow: auto; min-height: 0; }
 </style>
 </head>
 <body>
@@ -41,11 +38,19 @@
     // pagination — it just relays whatever `next_ref` the mcp-server hands
     // it back to the parent, and stops when `next_ref` is absent. The
     // parent (chat-interface) never inspects or builds that URI itself.
+    //
+    // Loading more is triggered by scroll position, not a button: when the
+    // scrollable body nears its bottom, and nothing is already in flight,
+    // it asks for the next page automatically.
+    const SCROLL_THRESHOLD_PX = 80;
+
     let state = { columns: [], rows: [], total_count: 0, next_ref: null };
     let sort = { index: null, dir: 1 };
+    let loading = false;
 
     function render(data) {
       state = { ...state, ...data };
+      loading = false;
       draw();
     }
 
@@ -53,6 +58,7 @@
       state.rows = state.rows.concat(data.rows || []);
       state.next_ref = data.next_ref ?? null;
       state.total_count = data.total_count ?? state.total_count;
+      loading = false;
       draw();
     }
 
@@ -96,15 +102,25 @@
 
       wrap.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 
-      const canLoadMore = !!state.next_ref;
-      footer.innerHTML = `
-        <span>${state.rows.length} of ${state.total_count} rows</span>
-        <button id="load-more" ${canLoadMore ? "" : "disabled"}>Load more</button>`;
-      document.getElementById("load-more").onclick = loadMore;
+      let status = `${state.rows.length} of ${state.total_count} rows`;
+      if (loading) status += " · loading more…";
+      else if (!state.next_ref) status += " · all loaded";
+      footer.textContent = status;
+
+      maybeLoadMore(); // in case the first page doesn't even fill the viewport
+    }
+
+    function maybeLoadMore() {
+      const wrap = document.getElementById("wrap");
+      if (loading || !state.next_ref) return;
+      const nearBottom = wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - SCROLL_THRESHOLD_PX;
+      if (nearBottom) loadMore();
     }
 
     function loadMore() {
-      if (!state.next_ref) return;
+      if (loading || !state.next_ref) return;
+      loading = true;
+      draw();
       window.parent.postMessage({ type: "request_data", source: state.next_ref }, "*");
     }
 
@@ -114,6 +130,8 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
     }
+
+    document.getElementById("wrap").addEventListener("scroll", maybeLoadMore);
 
     window.addEventListener("message", (e) => {
       if (!e.data || typeof e.data !== "object") return;

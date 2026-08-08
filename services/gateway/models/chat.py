@@ -6,3 +6,4 @@ class ChatRequest(BaseModel):
     message_id: str
     socket_id: str
     user_query: str
+    is_first_message: bool = False

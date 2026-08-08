@@ -5,44 +5,86 @@
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; padding: 12px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: Canvas; color: CanvasText;
+    display: flex; flex-direction: column; height: 100%;
   }
-  #status { font-size: 12px; opacity: 0.7; margin-bottom: 8px; }
-  #page {
-    background: rgba(127,127,127,0.06); border: 1px solid rgba(127,127,127,0.2);
-    border-radius: 8px; padding: 20px; min-height: 200px;
-    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
-    white-space: pre-wrap; line-height: 1.6;
-  }
-  #bar { height: 4px; border-radius: 2px; background: rgba(127,127,127,0.2); margin-bottom: 10px; overflow: hidden; }
+  #status { font-size: 12px; opacity: 0.7; margin-bottom: 8px; flex: 0 0 auto; }
+  #bar { height: 4px; border-radius: 2px; background: rgba(127,127,127,0.2); margin-bottom: 10px; overflow: hidden; flex: 0 0 auto; }
   #bar-fill { height: 100%; background: #5B8DEF; width: 0%; transition: width 0.2s; }
+  #viewer {
+    flex: 1 1 auto; border: 1px solid rgba(127,127,127,0.2); border-radius: 8px;
+    min-height: 260px; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    background: rgba(127,127,127,0.04);
+  }
+  #viewer canvas { max-width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,0.25); }
+  #placeholder { font-size: 12px; opacity: 0.6; margin: auto; }
+  #download {
+    display: inline-block; font-size: 13px; font-weight: 600; text-decoration: none;
+    padding: 8px 16px; border-radius: 8px; background: #5B8DEF; color: white; flex-shrink: 0;
+  }
+  #download:hover { background: #4874d1; }
 </style>
 </head>
 <body>
   <div id="bar"><div id="bar-fill"></div></div>
   <div id="status"></div>
-  <div id="page"></div>
+  <div id="viewer"><span id="placeholder">Assembling report…</span></div>
 
-  <script>
-    // Auto-paginates without user interaction: as soon as a chunk arrives,
-    // if it carries a next_ref, immediately ask the parent for the next
-    // one. The parent stays blind — it just relays `source` verbatim.
-    let assembled = "";
+  <!-- Vendored pdf.js, inlined — no CDN. Kept as inert (non-executing)
+       script tags so the raw source can be read via textContent, then
+       loaded via a Blob URL + dynamic import in the module script below.
+       That's what actually gives us a reference to its exports; an inline
+       type="module" script's top-level bindings aren't reachable from
+       outside it. -->
+  <script type="pdfjs-source" id="pdfjs-lib-src">__PDFJS_LIB_SOURCE__</script>
+  <script type="pdfjs-source" id="pdfjs-worker-src">__PDFJS_WORKER_SOURCE__</script>
+
+  <script type="module">
+    // Real PDF bytes, base64-encoded per chunk. Auto-paginates without
+    // user interaction: as soon as a chunk arrives, if it carries a
+    // next_ref, immediately ask the parent for the next one — the parent
+    // stays blind, it just relays `source` verbatim. Chunks are
+    // concatenated as base64 text and only decoded once fully assembled,
+    // since a PDF can't be rendered from a partial byte stream anyway.
+    let assembledBase64 = "";
     let totalChunks = 0;
+    let totalBytes = 0;
+    let reportId = "report";
+    let pdfjsLibPromise = null;
+
+    function getPdfjsLib() {
+      if (!pdfjsLibPromise) {
+        const libSrc = document.getElementById("pdfjs-lib-src").textContent;
+        const workerSrc = document.getElementById("pdfjs-worker-src").textContent;
+        const libUrl = URL.createObjectURL(new Blob([libSrc], { type: "text/javascript" }));
+        const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" }));
+        pdfjsLibPromise = import(libUrl).then((lib) => {
+          lib.GlobalWorkerOptions.workerSrc = workerUrl;
+          return lib;
+        });
+      }
+      return pdfjsLibPromise;
+    }
 
     function render(data) {
       totalChunks = data.total_chunks || 0;
+      totalBytes = data.total_bytes || 0;
+      reportId = data.report_id || reportId;
       appendRows(data);
     }
 
     function appendRows(data) {
-      assembled += data.data || "";
+      assembledBase64 += data.data || "";
       draw(data.chunk, data.next_ref);
       if (data.next_ref) {
         window.parent.postMessage({ type: "request_data", source: data.next_ref }, "*");
+      } else {
+        finish();
       }
     }
 
@@ -50,9 +92,59 @@
       const pct = totalChunks ? Math.min(100, Math.round((chunk / totalChunks) * 100)) : 0;
       document.getElementById("bar-fill").style.width = pct + "%";
       document.getElementById("status").textContent = nextRef
-        ? `Assembling report… chunk ${chunk} of ${totalChunks}`
-        : `Report ready — ${totalChunks} chunks assembled`;
-      document.getElementById("page").textContent = assembled;
+        ? `Assembling report… chunk ${chunk} of ${totalChunks} (${totalBytes} bytes)`
+        : `Report ready — ${totalBytes} bytes assembled`;
+    }
+
+    function base64ToBytes(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
+    async function finish() {
+      const viewer = document.getElementById("viewer");
+      viewer.innerHTML = '<span id="placeholder">Rendering report…</span>';
+
+      const dataUrl = `data:application/pdf;base64,${assembledBase64}`;
+      const downloadLink = document.createElement("a");
+      downloadLink.id = "download";
+      downloadLink.href = dataUrl;
+      downloadLink.download = `${reportId}.pdf`;
+      downloadLink.textContent = "Download PDF Report";
+
+      try {
+        const pdfjsLib = await getPdfjsLib();
+        const pdf = await pdfjsLib.getDocument({ data: base64ToBytes(assembledBase64) }).promise;
+        viewer.innerHTML = "";
+
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const viewportWidth = viewer.clientWidth - 24 || 400;
+          const unscaled = page.getViewport({ scale: 1 });
+          const scale = viewportWidth / unscaled.width;
+          const viewport = page.getViewport({ scale });
+
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          viewer.appendChild(canvas);
+
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        }
+
+        viewer.appendChild(downloadLink);
+      } catch (err) {
+        // Rendering failed for some reason — the download link is the
+        // guaranteed fallback, always independent of pdf.js succeeding.
+        viewer.innerHTML = "";
+        const message = document.createElement("span");
+        message.id = "placeholder";
+        message.textContent = "Preview unavailable — you can still download the report.";
+        viewer.appendChild(message);
+        viewer.appendChild(downloadLink);
+      }
     }
 
     window.addEventListener("message", (e) => {

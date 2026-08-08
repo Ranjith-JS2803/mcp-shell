@@ -9,7 +9,7 @@ export function wsUrl(socketId) {
   return `${wsBase}/ws/${socketId}`;
 }
 
-export async function postChat({ chatId, messageId, socketId, userQuery }) {
+export async function postChat({ chatId, messageId, socketId, userQuery, isFirstMessage }) {
   const res = await fetch(httpUrl("/chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -18,6 +18,7 @@ export async function postChat({ chatId, messageId, socketId, userQuery }) {
       message_id: messageId,
       socket_id: socketId,
       user_query: userQuery,
+      is_first_message: !!isFirstMessage,
     }),
   });
   if (!res.ok) throw new Error(`POST /chat failed: ${res.status}`);
