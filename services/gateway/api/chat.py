@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from components import chat_history, llm_agent_client
 from components.websocket_manager import WebSocketManager
 from models.chat import ChatRequest
+
+logger = logging.getLogger("gateway")
 
 router = APIRouter()
 
@@ -27,7 +31,8 @@ async def _process_chat(req: ChatRequest, ws_manager: WebSocketManager) -> None:
             elif event.get("event") == "final":
                 final_response = event.get("response")
     except Exception:
-        pass  # fall through to the fallback below
+        logger.exception("llm-agent stream failed for chat_id=%s message_id=%s", req.chat_id, req.message_id)
+        # fall through to the fallback below
 
     if final_response is None:
         try:

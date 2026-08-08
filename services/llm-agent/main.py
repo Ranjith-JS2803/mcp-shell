@@ -1,4 +1,5 @@
 import json
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,6 +9,8 @@ import gateway_client
 import llm_client
 from models import ChatRequest
 from prompts.loader import build_tools_block, load
+
+logger = logging.getLogger("llm-agent")
 
 TOOL_UNAVAILABLE_REPLY = "I'm having trouble reaching the data service right now. Please try again in a moment."
 GENERIC_FAILURE_REPLY = "Something went wrong while I was processing that. Please try again."
@@ -54,6 +57,7 @@ async def _stream_chat(req: ChatRequest):
         decision = await llm_client.ask_json(routing_prompt, req.user_query)
         tool_call = decision.get("tool_call")
     except Exception:
+        logger.exception("routing decision failed for chat_id=%s message_id=%s", req.chat_id, req.message_id)
         tool_failed = True
 
     if tool_call and not tool_failed:
@@ -69,6 +73,10 @@ async def _stream_chat(req: ChatRequest):
                     "data": result.get("data"),
                 }
         except Exception:
+            logger.exception(
+                "tool call failed for chat_id=%s message_id=%s tool=%s args=%s",
+                req.chat_id, req.message_id, tool_name, arguments,
+            )
             tool_failed = True
 
     full_text = ""
@@ -89,6 +97,7 @@ async def _stream_chat(req: ChatRequest):
                 full_text += piece
                 yield _event("chunk", text=piece)
         except Exception:
+            logger.exception("reply streaming failed for chat_id=%s message_id=%s", req.chat_id, req.message_id)
             full_text = tool_summary or GENERIC_FAILURE_REPLY
             yield _event("chunk", text=full_text)
 

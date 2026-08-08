@@ -4,17 +4,20 @@ template registry between them. That's deliberate: every use case should
 be readable in isolation.
 """
 
+import base64
+import uuid
 from typing import Annotated
 from urllib.parse import urlencode
 
 from mcp.types import CallToolResult, ResourceLink, TextContent
 from pydantic import Field
 
+import pdf_report
 from periods import parse_period
 from seed.db import get_connection
 
 PAGE_SIZE = 50
-REPORT_CHUNK_SIZE = 3  # lines of the simulated report per chunk
+REPORT_CHUNK_BYTES = 600  # small on purpose — makes pagination visibly reflected in the frontend
 
 PeriodArg = Annotated[
     str | None,
@@ -137,65 +140,35 @@ def resolve_orders_table_page(page: str, status: str | None = None, region: str 
 # ---------------------------------------------------------------------------
 
 
-def _report_lines(report_id: str, period: str | None) -> list[str]:
-    date_range = parse_period(period)
-    conn = get_connection()
-    try:
-        sql = (
-            "SELECT COUNT(*) AS order_count, SUM(total_amount) AS revenue, "
-            "AVG(total_amount) AS avg_order_value FROM orders WHERE status != 'cancelled'"
-        )
-        params: list = []
-        if date_range:
-            sql += " AND order_date >= ? AND order_date < ?"
-            params.extend(date_range)
-        row = conn.execute(sql, params).fetchone()
-    finally:
-        conn.close()
-
-    label = f" — {period}" if period else ""
-    return [
-        f"SALES REPORT{label}",
-        f"Report ID: {report_id}",
-        "=" * 40,
-        f"Total Revenue:     ${row['revenue'] or 0:,.2f}",
-        f"Order Count:       {row['order_count'] or 0}",
-        f"Avg Order Value:   ${row['avg_order_value'] or 0:,.2f}",
-        "-" * 40,
-        "This is a simulated report body — bytes are",
-        "streamed chunk-by-chunk to demonstrate the",
-        "same pagination contract as orders_report_table,",
-        "just applied to a binary/document artifact",
-        "instead of tabular rows.",
-        "=" * 40,
-        "End of report.",
-    ]
-
-
-def _report_chunk(report_id: str, period: str | None, chunk: int) -> dict:
-    lines = _report_lines(report_id, period)
-    total_chunks = -(-len(lines) // REPORT_CHUNK_SIZE)  # ceil div
-    start = (chunk - 1) * REPORT_CHUNK_SIZE
-    chunk_lines = lines[start : start + REPORT_CHUNK_SIZE]
+def _report_chunk(report_id: str, chunk: int) -> dict:
+    """Reads the already-rendered PDF back off disk and slices out one
+    small byte range — the file is built once by generate_sales_report,
+    not regenerated on every page request."""
+    pdf_bytes = pdf_report.read_report(report_id)
+    total_chunks = -(-len(pdf_bytes) // REPORT_CHUNK_BYTES)  # ceil div
+    start = (chunk - 1) * REPORT_CHUNK_BYTES
+    raw_slice = pdf_bytes[start : start + REPORT_CHUNK_BYTES]
 
     next_ref = None
     if chunk < total_chunks:
         next_ref = f"report-bytes-page://{report_id}/{chunk + 1}"
-        if period:
-            next_ref += f"?{urlencode({'period': period})}"
 
     return {
         "report_id": report_id,
         "chunk": chunk,
         "total_chunks": total_chunks,
-        "data": "\n".join(chunk_lines) + "\n",
+        "total_bytes": len(pdf_bytes),
+        "data": base64.b64encode(raw_slice).decode("ascii"),
         "next_ref": next_ref,
     }
 
 
 def generate_sales_report(period: PeriodArg = None) -> CallToolResult:
-    report_id = f"rep_{abs(hash((period, 'sales'))) % 100000:05d}"
-    first_chunk = _report_chunk(report_id, period, 1)
+    report_id = f"rep_{uuid.uuid4().hex[:10]}"
+    pdf_bytes = pdf_report.build_report_pdf(report_id, period)
+    pdf_report.save_report(report_id, pdf_bytes)
+
+    first_chunk = _report_chunk(report_id, 1)
     return CallToolResult(
         content=[
             ResourceLink(name="Sales Report", uri="pdf-report-template://", mimeType="text/html"),
@@ -205,9 +178,9 @@ def generate_sales_report(period: PeriodArg = None) -> CallToolResult:
     )
 
 
-def resolve_report_bytes_page(report_id: str, chunk: str, period: str | None = None) -> dict:
-    """Backs the report-bytes-page://{report_id}/{chunk}{?period} resource."""
-    return _report_chunk(report_id, period, int(chunk))
+def resolve_report_bytes_page(report_id: str, chunk: str) -> dict:
+    """Backs the report-bytes-page://{report_id}/{chunk} resource."""
+    return _report_chunk(report_id, int(chunk))
 
 
 # ---------------------------------------------------------------------------
