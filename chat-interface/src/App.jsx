@@ -40,15 +40,29 @@ export default function App() {
       });
   }, [chatId]);
 
-  const handlePush = useCallback((response) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.role === "agent" && m.message_id === response.message_id
-          ? { ...m, status: "done", text: response.text, artifact: response.artifact }
-          : m,
-      ),
-    );
-    setSending(false);
+  const handlePush = useCallback((event) => {
+    if (event.event === "chunk") {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "agent" && m.message_id === event.message_id
+            ? { ...m, status: "streaming", text: m.text + event.text }
+            : m,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "final") {
+      const response = event.response;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "agent" && m.message_id === response.message_id
+            ? { ...m, status: "done", text: response.text, artifact: response.artifact }
+            : m,
+        ),
+      );
+      setSending(false);
+    }
   }, []);
 
   useWebSocket(socketId, handlePush);

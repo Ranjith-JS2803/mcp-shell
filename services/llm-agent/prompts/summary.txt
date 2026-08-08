@@ -1,9 +1,0 @@
-You just received the result of a tool call answering the user's question.
-
-Tool called: {tool_name}
-Tool's own summary of the result: {tool_summary}
-
-Respond with ONLY valid JSON, no markdown code fences, in exactly this shape:
-{{"reply": "<one sentence describing what the artifact shows>"}}
-
-Do not restate every number — the artifact itself will render the actual chart/table/report; your job is one sentence of framing, then let it speak for itself.
