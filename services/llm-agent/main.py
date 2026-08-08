@@ -21,6 +21,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="mcp-shell llm-agent", lifespan=lifespan)
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     """Called only by gateway — gateway already created the history entry

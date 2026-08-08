@@ -4,6 +4,7 @@ size guard. Grouped in one file since they're all "the MCP-gateway logic"
 — one cohesive responsibility, even though it does three things.
 """
 
+import asyncio
 import json
 import os
 from contextlib import AsyncExitStack
@@ -38,10 +39,27 @@ class MCPGateway:
 
     # -- session lifecycle --------------------------------------------------
 
-    async def connect(self) -> None:
-        read, write = await self._stack.enter_async_context(streamable_http_client(self.url))
-        self.session = await self._stack.enter_async_context(ClientSession(read, write))
-        await self.session.initialize()
+    async def connect(self, retries: int = 15, delay: float = 2.0) -> None:
+        """Retries instead of crashing gateway's startup — depends_on only
+        gates container start order, not "the MCP server can actually
+        handle a session.initialize() yet"."""
+        last_exc: Exception | None = None
+        for attempt in range(retries):
+            stack = AsyncExitStack()
+            try:
+                read, write = await stack.enter_async_context(streamable_http_client(self.url))
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
+            except Exception as e:
+                last_exc = e
+                await stack.aclose()
+                if attempt < retries - 1:
+                    await asyncio.sleep(delay)
+                continue
+            self._stack = stack
+            self.session = session
+            return
+        raise RuntimeError(f"Could not connect to MCP server at {self.url} after {retries} attempts") from last_exc
 
     async def close(self) -> None:
         await self._stack.aclose()

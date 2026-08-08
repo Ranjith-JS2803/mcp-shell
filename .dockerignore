@@ -1,0 +1,12 @@
+# Applies to every service's build, since context: . is the repo root
+# for all of them (needed to install from the shared root pyproject.toml).
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.env
+**/*.db
+**/data
+**/node_modules
+**/dist
+.git
+docs
