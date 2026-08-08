@@ -1,9 +1,14 @@
-export default function Sidebar({ chats, activeChatId, onSelect, onNewChat }) {
+export default function Sidebar({ chats, activeChatId, onSelect, onNewChat, onCollapse }) {
   return (
     <aside className="sidebar">
-      <button className="new-chat-btn" onClick={onNewChat}>
-        + New chat
-      </button>
+      <div className="sidebar-top">
+        <button className="new-chat-btn" onClick={onNewChat}>
+          + New chat
+        </button>
+        <button className="collapse-btn" onClick={onCollapse} title="Close sidebar" aria-label="Close sidebar">
+          «
+        </button>
+      </div>
       <div className="chat-list">
         {chats.map((chat) => (
           <button

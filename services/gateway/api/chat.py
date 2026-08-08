@@ -22,31 +22,31 @@ async def _process_chat(req: ChatRequest, ws_manager: WebSocketManager) -> None:
     chunk by chunk as it arrives, then the final complete response."""
     final_response = None
     try:
-        async for event in llm_agent_client.stream_chat(req.chat_id, req.message_id, req.socket_id, req.user_query):
-            if event.get("event") == "chunk":
-                await ws_manager.push(
-                    req.socket_id,
-                    {
-                        "event": "chunk",
-                        "chat_id": req.chat_id,
-                        "message_id": req.message_id,
-                        "text": event.get("text", ""),
-                    },
-                )
-            elif event.get("event") == "final":
+        async for event in llm_agent_client.stream_chat(
+            req.chat_id, req.message_id, req.socket_id, req.user_query, req.is_first_message
+        ):
+            # Generic relay — gateway doesn't need to know every event
+            # shape llm-agent might ever emit (chunk, title_chunk, ...),
+            # it just tags each with chat_id/message_id and forwards it.
+            event.setdefault("chat_id", req.chat_id)
+            event.setdefault("message_id", req.message_id)
+            if event.get("event") == "final":
                 final_response = event.get("response")
+            await ws_manager.push(req.socket_id, event)
     except Exception:
         logger.exception("llm-agent stream failed for chat_id=%s message_id=%s", req.chat_id, req.message_id)
         # fall through to the fallback below
 
     if final_response is None:
+        # The real `final` event, if llm-agent sent one, was already
+        # relayed inside the loop above — this only fires the fallback
+        # path when the stream broke before ever reaching it.
         try:
             await chat_history.update_reply(req.chat_id, req.message_id, AGENT_UNAVAILABLE_REPLY)
         except Exception:
             pass
-        final_response = _fallback_response(req, AGENT_UNAVAILABLE_REPLY)
-
-    await ws_manager.push(req.socket_id, {"event": "final", "response": final_response})
+        fallback = _fallback_response(req, AGENT_UNAVAILABLE_REPLY)
+        await ws_manager.push(req.socket_id, {"event": "final", "response": fallback})
 
 
 @router.post("/chat")

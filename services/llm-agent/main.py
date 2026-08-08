@@ -14,6 +14,7 @@ logger = logging.getLogger("llm-agent")
 
 TOOL_UNAVAILABLE_REPLY = "I'm having trouble reaching the data service right now. Please try again in a moment."
 GENERIC_FAILURE_REPLY = "Something went wrong while I was processing that. Please try again."
+MAX_TITLE_WORDS = 5
 
 
 @asynccontextmanager
@@ -35,16 +36,34 @@ def _event(event: str, **fields) -> str:
     return json.dumps({"event": event, **fields}) + "\n"
 
 
+def _clip_to_words(text: str, max_words: int) -> str:
+    words = text.strip().split()
+    return " ".join(words[:max_words])
+
+
 async def _stream_chat(req: ChatRequest):
-    """Newline-delimited JSON events: any number of `chunk`s (the reply,
-    streamed token by token as the LLM generates it) followed by exactly
-    one `final` (the complete ChatResponse-shaped payload, once the reply
-    is fully assembled and the history write has been attempted).
+    """Newline-delimited JSON events: optionally a run of `title_chunk`s +
+    one `title_done` (only on a chat's first message), then any number of
+    `chunk`s (the reply, streamed token by token) followed by exactly one
+    `final` (the complete ChatResponse-shaped payload, once the reply is
+    fully assembled and the history write has been attempted).
 
     Every step can fail independently (gateway/MCP server unreachable,
     either LLM call failing) — none of those should leave the user
     without a reply, or leave the history doc's reply stuck at null.
     """
+    if req.is_first_message:
+        try:
+            title = ""
+            async for piece in llm_client.stream_text(load("title"), req.user_query):
+                title += piece
+                yield _event("title_chunk", text=piece)
+            yield _event("title_done", title=_clip_to_words(title, MAX_TITLE_WORDS))
+        except Exception:
+            logger.exception("title generation failed for chat_id=%s message_id=%s", req.chat_id, req.message_id)
+            # Non-fatal — the frontend already has a placeholder title from
+            # the user's own message; just move on without a title_done.
+
     artifact = None
     tool_name = None
     tool_summary = ""

@@ -46,11 +46,19 @@ export default function App() {
   const { chats, activeChatId, setActiveChatId, createChat, renameChat } = useChatList();
   const [messagesByChat, setMessagesByChat] = useState({});
   const [sendingByChat, setSendingByChat] = useState({});
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("mcp-shell-sidebar-collapsed") === "1",
+  );
   const loadedChatsRef = useRef(new Set());
   const didInitRef = useRef(false);
+  const titleBuffers = useRef({}); // chat_id -> accumulated title text while streaming
 
   // message_id -> { chatId, queue: string, timer: number|null, finalResponse: object|null }
   const revealState = useRef({});
+
+  useEffect(() => {
+    localStorage.setItem("mcp-shell-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   // First run: no chats yet — start one so the app isn't an empty sidebar.
   // Guarded against StrictMode's double-invoke, which would otherwise
@@ -140,6 +148,20 @@ export default function App() {
 
   const handlePush = useCallback(
     (event) => {
+      if (event.event === "title_chunk") {
+        const chatId = event.chat_id;
+        const buffered = (titleBuffers.current[chatId] || "") + event.text;
+        titleBuffers.current[chatId] = buffered;
+        renameChat(chatId, buffered);
+        return;
+      }
+
+      if (event.event === "title_done") {
+        renameChat(event.chat_id, event.title);
+        delete titleBuffers.current[event.chat_id];
+        return;
+      }
+
       if (event.event === "chunk") {
         const messageId = event.message_id;
         if (!revealState.current[messageId]) {
@@ -163,7 +185,7 @@ export default function App() {
         }
       }
     },
-    [ensureRevealTimer, finalizeMessage],
+    [ensureRevealTimer, finalizeMessage, renameChat],
   );
 
   useWebSocket(socketId, handlePush);
@@ -183,7 +205,7 @@ export default function App() {
     if (isFirstMessage) renameChat(chatId, truncateTitle(userQuery));
 
     try {
-      await postChat({ chatId, messageId, socketId, userQuery });
+      await postChat({ chatId, messageId, socketId, userQuery, isFirstMessage });
     } catch {
       updateChatMessages(chatId, (msgs) =>
         msgs.map((m) =>
@@ -201,7 +223,24 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar chats={chats} activeChatId={activeChatId} onSelect={setActiveChatId} onNewChat={createChat} />
+      {sidebarCollapsed ? (
+        <button
+          className="sidebar-expand-btn"
+          onClick={() => setSidebarCollapsed(false)}
+          title="Open sidebar"
+          aria-label="Open sidebar"
+        >
+          »
+        </button>
+      ) : (
+        <Sidebar
+          chats={chats}
+          activeChatId={activeChatId}
+          onSelect={setActiveChatId}
+          onNewChat={createChat}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+      )}
       <div className="chat-column">
         <header className="app-header">mcp-shell</header>
         <main className="app-main">

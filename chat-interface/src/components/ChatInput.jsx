@@ -38,8 +38,16 @@ export default function ChatInput({ onSend, disabled }) {
         placeholder="Ask about revenue, orders, products..."
         rows={1}
       />
-      <button onClick={submit} disabled={disabled || !value.trim()}>
-        Send
+      <button onClick={submit} disabled={disabled || !value.trim()} aria-label="Send message" title="Send">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M12 19V5M12 5L5 12M12 5L19 12"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
     </div>
   );

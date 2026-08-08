@@ -31,14 +31,22 @@ async def close() -> None:
     _client = None
 
 
-async def stream_chat(chat_id: str, message_id: str, socket_id: str, user_query: str) -> AsyncIterator[dict]:
+async def stream_chat(
+    chat_id: str, message_id: str, socket_id: str, user_query: str, is_first_message: bool = False
+) -> AsyncIterator[dict]:
     """Yields llm-agent's newline-delimited JSON events as they arrive —
-    `{"event": "chunk", "text": ...}` any number of times, then exactly
-    one `{"event": "final", "response": {...}}`."""
+    `{"event": "chunk"|"title_chunk", ...}` any number of times, then
+    exactly one `{"event": "final", "response": {...}}`."""
     async with _client.stream(
         "POST",
         "/chat",
-        json={"chat_id": chat_id, "message_id": message_id, "socket_id": socket_id, "user_query": user_query},
+        json={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "socket_id": socket_id,
+            "user_query": user_query,
+            "is_first_message": is_first_message,
+        },
     ) as resp:
         resp.raise_for_status()
         async for line in resp.aiter_lines():
