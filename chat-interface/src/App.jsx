@@ -43,14 +43,14 @@ function truncateTitle(text) {
 
 export default function App() {
   const socketId = useSocketId();
-  const { chats, activeChatId, setActiveChatId, createChat, renameChat } = useChatList();
+  const { chats, activeChatId, setActiveChatId, createChat, renameChat, removeChat, isFreshChat } = useChatList();
   const [messagesByChat, setMessagesByChat] = useState({});
   const [sendingByChat, setSendingByChat] = useState({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("mcp-shell-sidebar-collapsed") === "1",
   );
   const loadedChatsRef = useRef(new Set());
-  const didInitRef = useRef(false);
+  const creatingChatRef = useRef(false);
   const titleBuffers = useRef({}); // chat_id -> accumulated title text while streaming
 
   // message_id -> { chatId, queue: string, timer: number|null, finalResponse: object|null }
@@ -60,29 +60,59 @@ export default function App() {
     localStorage.setItem("mcp-shell-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
-  // First run: no chats yet — start one so the app isn't an empty sidebar.
-  // Guarded against StrictMode's double-invoke, which would otherwise
-  // create two chats on a fresh visit.
-  useEffect(() => {
-    if (didInitRef.current) return;
-    didInitRef.current = true;
-    if (chats.length === 0) createChat();
-  }, [chats.length, createChat]);
-
-  // Lazily fetch history the first time a chat is opened.
+  // Lazily fetch history the first time a chat is opened. If a chat that
+  // existed before this session (i.e. persisted in localStorage from a
+  // prior visit) comes back with no history at all, the backend has
+  // nothing for it — most likely its Redis data is gone — so prune it
+  // from the sidebar instead of keeping a permanently-empty entry.
+  // A chat created in this session is exempt: it legitimately has no
+  // history yet until its first message is sent.
   useEffect(() => {
     if (!activeChatId || loadedChatsRef.current.has(activeChatId)) return;
     loadedChatsRef.current.add(activeChatId);
-    getHistory(activeChatId)
+    const chatId = activeChatId;
+    getHistory(chatId)
       .then((history) => {
         if (history.length) {
-          setMessagesByChat((prev) => ({ ...prev, [activeChatId]: historyToMessages(history) }));
+          setMessagesByChat((prev) => ({ ...prev, [chatId]: historyToMessages(history) }));
+        } else if (!isFreshChat(chatId)) {
+          removeChat(chatId);
+          setMessagesByChat((prev) => {
+            const next = { ...prev };
+            delete next[chatId];
+            return next;
+          });
+          // Release activeChatId if it's still pointing at the chat we
+          // just removed — otherwise the "no active chat" fallback effect
+          // never fires (its guard sees a still-truthy, now-orphaned id)
+          // and the UI is stuck showing an empty thread for nothing.
+          setActiveChatId((current) => (current === chatId ? null : current));
         }
       })
       .catch(() => {
-        // fresh chat, or gateway briefly unreachable — either way, start empty
+        // gateway briefly unreachable — don't prune on a network blip
       });
-  }, [activeChatId]);
+  }, [activeChatId, isFreshChat, removeChat, setActiveChatId]);
+
+  // Whenever there's no active chat — first-ever visit, or one was just
+  // pruned away — fall back to another existing chat, or start a fresh
+  // one if there's truly nothing left. The ref guard (checked and set
+  // synchronously, not via state) is what makes this safe under
+  // StrictMode's double-invoke: the second invocation sees it already
+  // set and skips, so createChat() can never fire twice for one gap.
+  useEffect(() => {
+    if (activeChatId) {
+      creatingChatRef.current = false;
+      return;
+    }
+    if (chats.length > 0) {
+      setActiveChatId(chats[0].chat_id);
+      return;
+    }
+    if (creatingChatRef.current) return;
+    creatingChatRef.current = true;
+    createChat();
+  }, [activeChatId, chats, createChat, setActiveChatId]);
 
   useEffect(() => {
     return () => {

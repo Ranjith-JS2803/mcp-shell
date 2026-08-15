@@ -13,6 +13,17 @@
     background: Canvas; color: CanvasText;
     display: flex; flex-direction: column; height: 100%;
   }
+  #toolbar {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end;
+    margin-bottom: 8px;
+  }
+  #download-all {
+    font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px;
+    border-radius: 8px; border: 1px solid currentColor; background: transparent;
+    color: inherit; cursor: pointer; opacity: 0.85; display: flex; align-items: center; gap: 6px;
+  }
+  #download-all:hover { opacity: 1; }
+  #download-all:disabled { opacity: 0.4; cursor: default; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 6px 10px; white-space: nowrap; }
   thead th {
@@ -30,6 +41,7 @@
 </style>
 </head>
 <body>
+  <div id="toolbar"></div>
   <div id="wrap"></div>
   <div id="footer"></div>
 
@@ -42,16 +54,25 @@
     // Loading more is triggered by scroll position, not a button: when the
     // scrollable body nears its bottom, and nothing is already in flight,
     // it asks for the next page automatically.
+    //
+    // "Download all" reuses this exact same mechanism — it just keeps
+    // chaining loadMore() calls (instead of waiting for scroll) until
+    // next_ref runs out, then builds a CSV from every row that was
+    // fetched. There's no separate "give me everything" backend endpoint;
+    // that would be exactly the raw-dump-in-one-response problem this
+    // whole project is built to avoid.
     const SCROLL_THRESHOLD_PX = 80;
 
     let state = { columns: [], rows: [], total_count: 0, next_ref: null };
     let sort = { index: null, dir: 1 };
     let loading = false;
+    let downloadingAll = false;
 
     function render(data) {
       state = { ...state, ...data };
       loading = false;
       draw();
+      continueDownloadIfNeeded();
     }
 
     function appendRows(data) {
@@ -60,6 +81,18 @@
       state.total_count = data.total_count ?? state.total_count;
       loading = false;
       draw();
+      continueDownloadIfNeeded();
+    }
+
+    function continueDownloadIfNeeded() {
+      if (!downloadingAll) return;
+      if (state.next_ref) {
+        loadMore();
+      } else {
+        downloadingAll = false;
+        triggerCsvDownload();
+        drawToolbar();
+      }
     }
 
     function sortedRows() {
@@ -77,9 +110,24 @@
       draw();
     }
 
+    function drawToolbar() {
+      const toolbar = document.getElementById("toolbar");
+      if (!state.columns.length) {
+        toolbar.innerHTML = "";
+        return;
+      }
+      const label = downloadingAll
+        ? `Fetching all rows… (${state.rows.length} of ${state.total_count})`
+        : "⬇ Download all rows (CSV)";
+      toolbar.innerHTML = `<button id="download-all" ${downloadingAll ? "disabled" : ""}>${label}</button>`;
+      document.getElementById("download-all").onclick = startDownloadAll;
+    }
+
     function draw() {
       const wrap = document.getElementById("wrap");
       const footer = document.getElementById("footer");
+
+      drawToolbar();
 
       if (!state.columns.length) {
         wrap.innerHTML = '<div id="empty">No data</div>';
@@ -122,6 +170,42 @@
       loading = true;
       draw();
       window.parent.postMessage({ type: "request_data", source: state.next_ref }, "*");
+    }
+
+    function startDownloadAll() {
+      if (downloadingAll) return;
+      downloadingAll = true;
+      drawToolbar();
+      if (state.next_ref) {
+        loadMore();
+      } else {
+        downloadingAll = false;
+        triggerCsvDownload();
+        drawToolbar();
+      }
+    }
+
+    function csvEscape(value) {
+      const s = String(value);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    function triggerCsvDownload() {
+      const lines = [state.columns.map(csvEscape).join(",")];
+      for (const row of sortedRows()) {
+        lines.push(row.map(csvEscape).join(","));
+      }
+      const csv = lines.join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "orders.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     }
 
     function escapeHtml(v) {
